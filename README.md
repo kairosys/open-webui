@@ -31,7 +31,7 @@ Bifrost Gateway http://bifrost:8080/v1 -─────────────�
                   Tracing / Langfuse  (http://langfuse:3000) ◄── prompts, traces, evals
                                           │
                  Observability Stack      ▼
-                      furseal namespace (Kind cluster)
+                                      active Kubernetes context
 ```
 
 Open Web UI issues streaming chat/completion requests to the Bifrost gateway at `http://bifrost:8080/v1` and forwards LLM traces to Langfuse for async prompt logging, call tracing, and evaluation.
@@ -57,7 +57,7 @@ open-webui/               # deploy config + runtime data (NOT upstream source)
 ## Prerequisites
 
 - Kind Kubernetes cluster running on Mac Studio with nginx ingress controller installed.
-- Namespace `furseal` created: `kubectl create ns furseal`.
+- Manifests are namespace-less; apply to your active context (`kubectl config view`). A hostPath `DirectoryOrCreate` auto-provisions `/mnt/workspaces/open-webui/data` on first start.
 - Bifrost gateway reachable at `http://bifrost:8080/v1` (OpenAI-compatible) within the same namespace/network exposing local Ollama and cloud LLMs.
 - Postgres available for Open Web UI data persistence.
 - Langfuse reachable at `http://langfuse:3000` with API credentials prepared for admin configuration.
@@ -96,13 +96,13 @@ The deployment mounts hostPath `/mnt/workspaces/open-webui/data` into the contai
 
 ```sh
 # live pod logs
-kubectl -n furseal logs -f deploy/open-webui
+kubectl logs -f deploy/open-webui
 
 # rolling restart after config changes
-kubectl -n furseal rollout restart deployment open-webui
+kubectl rollout restart deployment open-webui
 
-# confirm healthy status
-kubectl -n furseal get pods,svc,ingress,pvc   # (none here expect svc + ingress)
+# confirm healthy status (ClusterIP svc + ingress expected)
+kubectl get pods,svc,ingress,pvc
 
 # backup the runtime state directory on the host node:
 rsync -av data/ /mnt/backups/open-webui-data-$(date +%F)/
