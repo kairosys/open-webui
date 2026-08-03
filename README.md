@@ -90,7 +90,15 @@ rsync -av /mnt/workspaces/open-webui/data/ "/mnt/backups/open-webui-data-$(date 
 ## Architecture
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px'}}}%%
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'fontSize': '14px',
+    'darkMode': true,
+    'lineColor': '#8B949E',
+    'textColor': '#E6EDF3'
+  }
+}}%%
 graph LR
     U[User Browser<br/>HTTP] --> I[Ingress / Service<br/>nginx · open-webui:8080]
     I --> P[Open WebUI Pod<br/>v0.11.0]
