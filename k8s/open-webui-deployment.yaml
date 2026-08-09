@@ -68,13 +68,3 @@ spec:
                 name: open-webui
                 port:
                   number: 8080
-    - host: ai.furseal.net
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: open-webui
-                port:
-                  number: 8080

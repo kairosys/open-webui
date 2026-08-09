@@ -27,11 +27,10 @@ This repository contains deployment manifests and runtime data for a containeriz
 
 | Feature | Description |
 |---|---|
-| Single authoritative manifest | Service, Deployment, and Ingress defined together in `k8s/open-webui-deployment.yaml` |
+| Single authoritative manifest | Service, Deployment, and local Ingress defined together in `k8s/open-webui-deployment.yaml` |
 | Pinned upstream image | Runs `ghcr.io/open-webui/open-webui:v0.11.0` with `imagePullPolicy: Always` |
 | Persistent state | Kind-node hostPath `/mnt/workspaces/open-webui/data` mounts to `/app/backend/data`, auto-provisioned via `DirectoryOrCreate` |
-| Secret-backed configuration | `envFrom` injects `WEBUI_SECRET_KEY` from `open-webui-secret` |
-| Ingress routing | nginx exposes both `open-webui.localhost` and `ai.furseal.net` |
+| Secret-backed configuration | `envFrom` injects `WEBUI_SECRET_KEY` and Langfuse keys from `open-webui-secret` |
 | OpenAI-compatible gateway | Streaming completions and embeddings served through Bifrost at `http://bifrost:8080/v1` |
 | LLM observability | Traces and evaluations forwarded to Langfuse at `http://langfuse:3000` |
 
@@ -39,7 +38,7 @@ This repository contains deployment manifests and runtime data for a containeriz
 
 ### Prerequisites
 
-- A Kind Kubernetes cluster with the nginx ingress controller installed (Mac Studio)
+- A Kind Kubernetes cluster with the nginx ingress controller installed
 - `kubectl` configured against the target context — manifests are namespace-less and deploy into the current context
 - Bifrost gateway reachable at `http://bifrost:8080/v1`, Langfuse reachable at `http://langfuse:3000`
 
@@ -53,7 +52,7 @@ kubectl apply -f k8s/open-webui-secret.yaml
 ### Apply the Deployment
 
 ```sh
-# Service + Deployment + Ingress are all defined in this single file
+# Service + Deployment + local Ingress are all defined in this single file
 kubectl apply -f k8s/open-webui-deployment.yaml
 ```
 
@@ -89,6 +88,8 @@ rsync -av /mnt/workspaces/open-webui/data/ "/mnt/backups/open-webui-data-$(date 
 
 ## Architecture
 
+Open WebUI streams chat completions to the Bifrost gateway and forwards LLM traces to Langfuse. All persistent state (SQLite database, vector index, caches, uploads) lives on the hostPath volume mounted at `/app/backend/data`.
+
 ```mermaid
 %%{init: {
   'theme': 'base',
@@ -123,18 +124,16 @@ graph LR
     class SEC auth
 ```
 
-Open Web UI streams chat completions to the Bifrost gateway and forwards LLM traces to Langfuse for prompt logging, call tracing, and evaluation. All persistent state (SQLite database, vector index, caches, uploads) lives on the hostPath volume mounted at `/app/backend/data`.
-
 ## Configuration
 
 Configuration is supplied through the `open-webui-secret` manifest, injected into the Deployment via `envFrom`. Generate your own values; never commit real keys.
 
-| Variable | Description |
-|---|---|
-| `WEBUI_SECRET_KEY` | Session signing secret; rotating it invalidates active sessions |
-| `LANGFUSE_PUBLIC_KEY` | Langfuse public API key, pasted in Admin Settings |
-| `LANGFUSE_SECRET_KEY` | Langfuse secret API key, pasted in Admin Settings |
-| `LANGFUSE_HOST` | Langfuse endpoint, `http://langfuse:3000` |
+| Variable | Description | Default |
+|---|---|---|
+| `WEBUI_SECRET_KEY` | Session signing secret; rotating it invalidates active sessions | — |
+| `LANGFUSE_PUBLIC_KEY` | Langfuse public API key | — |
+| `LANGFUSE_SECRET_KEY` | Langfuse secret API key | — |
+| `LANGFUSE_HOST` | Langfuse endpoint | `http://langfuse:3000` |
 
 Runtime limits are declared in the Deployment spec: `requests.memory: 1024Mi`, `limits.memory: 4096Mi`.
 
@@ -143,16 +142,17 @@ Runtime limits are declared in the Deployment spec: `requests.memory: 1024Mi`, `
 ```
 open-webui/
 ├── k8s/
-│   ├── open-webui-deployment.yaml   # Service + Deployment + Ingress (authoritative)
-│   └── open-webui-secret.yaml       # Secret: WEBUI_SECRET_KEY (git-ignored)
-├── data/                            # hostPath runtime volume → /app/backend/data
-│   ├── webui.db                     # SQLite database (profiles, chat history)
-│   ├── vector_db/                   # embedding index
-│   ├── cache/                       # model caches
-│   └── uploads/                     # user-uploaded documents
-├── AGENTS.md                        # maintainer notes for agent sessions
-├── LICENSE                          # MIT license
-└── README.md                        # this file
+│   ├── open-webui-deployment.yaml       # Service + Deployment + Ingress (open-webui.localhost)
+│   ├── open-webui-external-ingress.yaml # ai.furseal.net Ingress (git-ignored)
+│   └── open-webui-secret.yaml           # Secret: WEBUI_SECRET_KEY (git-ignored)
+├── data/                                # hostPath runtime volume → /app/backend/data
+│   ├── webui.db                         # SQLite database (profiles, chat history)
+│   ├── vector_db/                       # embedding index
+│   ├── cache/                           # model caches
+│   └── uploads/                         # user-uploaded documents
+├── AGENTS.md                            # maintainer notes for agent sessions
+├── LICENSE                              # MIT license
+└── README.md                            # this file
 ```
 
 ## Tech Stack
@@ -180,6 +180,14 @@ kubectl apply -f k8s/open-webui-secret.yaml
 kubectl apply -f k8s/open-webui-deployment.yaml
 ```
 
+Optional, only if you want the `ai.furseal.net` route (git-ignored file, not present in a fresh clone):
+
+```sh
+kubectl apply -f k8s/open-webui-external-ingress.yaml
+```
+
+### Validate Before Rollout
+
 No local build is required — the Deployment runs the published upstream image directly. After any manifest edit, validate before rollout:
 
 ```sh
@@ -189,7 +197,8 @@ kubectl diff -f k8s/open-webui-deployment.yaml
 
 ### Notes
 
-- `data/`, `*.log`, and `k8s/*-secret.yaml` are git-ignored by design; do not re-commit regenerated state.
+- `data/`, `*.log`, `k8s/*-secret.yaml`, and `k8s/*-external-ingress.yaml` are git-ignored by design; do not re-commit regenerated state.
+- The main manifest routes only `open-webui.localhost`. The `ai.furseal.net` route lives in a separate git-ignored ingress; a fresh clone has no external route.
 - Manifests carry no namespace; they deploy into the current kubectl context (default: `default`).
 
 ## Contributing

@@ -6,9 +6,10 @@ No `package.json`, `pyproject.toml`, or other source/build tooling exists; do
 not run application-level build/test/lint/fix commands. Treat these as k8s manifests only.
 
 ## Repo contents (what an agent may edit)
-- `k8s/open-webui-deployment.yaml` — Service (`ClusterIP:8080`) + Deployment + Ingress, all namespace-less. **Authoritative.**
+- `k8s/open-webui-deployment.yaml` — Service (`ClusterIP:8080`) + Deployment + Ingress (host: `open-webui.localhost` only), all namespace-less. **Authoritative.**
+- `k8s/open-webui-external-ingress.yaml` — gitignored; the `ai.furseal.net` Ingress, split out of the main manifest.
 - `k8s/open-webui-secret.yaml` — gitignored; defines `open-webui-secret` with `WEBUI_SECRET_KEY`. Generate yours; do not reuse the committed placeholder or commit real keys.
-- `.gitignore` excludes `data/`, `*.log`, and `k8s/*-secret.yaml`.
+- `.gitignore` excludes `data/`, `*.log`, `k8s/*-secret.yaml`, and `k8s/*-external-ingress.yaml`.
 
 ## What an agent should NOT edit / expect to run here
 - No build/test/lint targets for Open Web UI's Python/Go code (not present).
@@ -17,10 +18,11 @@ not run application-level build/test/lint/fix commands. Treat these as k8s manif
 
 ## Deployment fact-check (verify here, not in README prose)
 Authoritative source of truth = `k8s/*.yaml`. Read these diverge:
-1. **Image tag.** Manifest pins the image to `ghcr.io/open-webui/open-webui:v0.11.0` with `imagePullPolicy: Always`. (README's table says `:main`; the manifest is what k8s actually runs.) Do not change tags without intent.
+1. **Image tag.** Manifest pins the image to `ghcr.io/open-webui/open-webui:v0.11.0` with `imagePullPolicy: Always`. Do not change tags without intent.
 2. **hostPath on Kind node.** Deployment mounts host `/mnt/workspaces/open-webui/data` → container `/app/backend/data`, `type: DirectoryOrCreate`. The in-repo `./data/` dir (gitignored) holds the live SQLite/cache/vector/upload state for that mount point, so back up and edit it at that on-host path — not by treating repo files as a "source tree."
 3. **Namespace.** Manifests carry no `namespace:` — they deploy into the
    current kubectl context's namespace (default: `default`). See `kubectl config view`.
+4. **Ingress hosts are split.** The main manifest routes only `open-webui.localhost`; `ai.furseal.net` lives in the gitignored `open-webui-external-ingress.yaml`. A fresh clone therefore has no `ai.furseal.net` route.
 
 ## Apply order (matters, or pods start without env vars / fail to resolve Secret)
 ```sh
@@ -28,9 +30,12 @@ Authoritative source of truth = `k8s/*.yaml`. Read these diverge:
 kubectl apply -f k8s/open-webui-secret.yaml
 
 # 2. service + deployment + ingress are all in this file; applied together
-kubectl apply -f k8s/open-webui-deployment.yaml    # ClusterIP svc → Ingress(open-web-ui.localhost, ai.furseal.net) -> svc:8080
+kubectl apply -f k8s/open-webui-deployment.yaml    # ClusterIP svc → Ingress(open-webui.localhost) → svc:8080
+
+# 3. optional, only if you want the ai.furseal.net route (gitignored, not in a fresh clone)
+kubectl apply -f k8s/open-webui-external-ingress.yaml
 ```
-Note: the README's "step 3 = Ingress" line is misleading — ingress is defined in `open-webui-deployment.yaml`, not a third file.
+Note: the README's "step 3 = Ingress" line is misleading — the local ingress is defined in `open-webui-deployment.yaml`; only the external host lives in a third file.
 
 ## Initial admin bootstrap (one-time per fresh empty DB only)
 1. Visit `/auth/admin/setup` on first boot → no users exist yet.
@@ -53,4 +58,5 @@ rsync -av /mnt/workspaces/open-webui/data/ "/mnt/backups/open-webui-data-$(date 
 ## Gotchas an agent is likely to hit otherwise
 - Editing the image tag to remove `.v`-pin in favor of `:main` will drift from what this repo ships.
 - Rotating `WEBUI_SECRET_KEY` invalidates sessions; re-apply secret + `rollout restart`.
+- Keep `ai.furseal.net` out of `open-webui-deployment.yaml` — its route belongs in the gitignored `open-webui-external-ingress.yaml` or it leaks into commits and the repo can't ship without a real cert.
 - Ingress exposes `open-webui.localhost`; local DNS/`.localhost` resolution is your own host setup, not k8s'.
