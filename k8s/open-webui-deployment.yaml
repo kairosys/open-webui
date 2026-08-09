@@ -37,6 +37,9 @@ spec:
           envFrom:
             - secretRef:
                 name: open-webui-secret
+          env:
+            - name: TZ
+              value: "Asia/Hong_Kong"
           resources:
             requests:
               memory: "1024Mi"
