@@ -1,62 +1,57 @@
 # AGENTS.md — Open WebUI deployment config
 
 This repo is **declarative Kubernetes manifests + local runtime data** for a
-containerized `open-webui` (the upstream project's app code, NOT here).  
+containerized `open-webui` (the upstream project's app code, NOT here).
 No `package.json`, `pyproject.toml`, or other source/build tooling exists; do
 not run application-level build/test/lint/fix commands. Treat these as k8s manifests only.
 
 ## Repo contents (what an agent may edit)
-- `k8s/open-webui-deployment.yaml` — Service (`ClusterIP:8080`) + Deployment + Ingress (host: `open-webui.localhost` only), all namespace-less. **Authoritative.**
+- `k8s/open-webui-deployment.yaml` — Ingress (`open-webui.localhost`) + Service (`ClusterIP:8080`) + Deployment, all namespace-less. **Authoritative.**
 - `k8s/open-webui-external-ingress.yaml` — gitignored; the `ai.furseal.net` Ingress, split out of the main manifest.
-- `k8s/open-webui-secret.yaml` — gitignored; defines `open-webui-secret` with `WEBUI_SECRET_KEY`. Generate yours; do not reuse the committed placeholder or commit real keys.
-- `.gitignore` excludes `data/`, `*.log`, `k8s/*-secret.yaml`, and `k8s/*-external-ingress.yaml`.
+- `k8s/open-webui-secret.yaml` — gitignored; the local copy holds the live `WEBUI_SECRET_KEY` (the only key — verified in-cluster). Never commit it.
+- `data/` — gitignored; **the same directory as the live hostPath volume** (same inode on the node): running ~500MB SQLite, `vector_db/`, `cache/`, `uploads/`. Not a source-tree copy.
+- `.gitignore` excludes `data/`, `*.log`, `k8s/*-secret.yaml`, `k8s/*-external-ingress.yaml`.
 
-## What an agent should NOT edit / expect to run here
-- No build/test/lint targets for Open Web UI's Python/Go code (not present).
-- Do not try to make the upstream open-webui toolchain work against this repo.
-- Don't `kubectl apply`-then-edit runtime DB inside; `data/` is a hostPath volume, see below.
+## What an agent should NOT do here
+- No build/test/lint targets for Open Web UI's Python/Go code (not present); don't try to make the upstream toolchain work against this repo.
+- Don't hand-edit `data/` like source, and don't modify `webui.db` while the pod runs — back it up (rsync below) and `kubectl scale deploy open-webui --replicas=0` first.
 
-## Deployment fact-check (verify here, not in README prose)
-Authoritative source of truth = `k8s/*.yaml`. Read these diverge:
-1. **Image tag.** Manifest pins the image to `ghcr.io/open-webui/open-webui:v0.11.0` with `imagePullPolicy: Always`. Do not change tags without intent.
-2. **hostPath on Kind node.** Deployment mounts host `/mnt/workspaces/open-webui/data` → container `/app/backend/data`, `type: DirectoryOrCreate`. The in-repo `./data/` dir (gitignored) holds the live SQLite/cache/vector/upload state for that mount point, so back up and edit it at that on-host path — not by treating repo files as a "source tree."
-3. **Namespace.** Manifests carry no `namespace:` — they deploy into the
-   current kubectl context's namespace (default: `default`). See `kubectl config view`.
-4. **Ingress hosts are split.** The main manifest routes only `open-webui.localhost`; `ai.furseal.net` lives in the gitignored `open-webui-external-ingress.yaml`. A fresh clone therefore has no `ai.furseal.net` route.
+## Deployment facts (verified against manifest + live cluster)
+- Image `ghcr.io/open-webui/open-webui:v0.11.0`, `imagePullPolicy: Always`. Don't re-tag to `:main` without intent.
+- Kind cluster `mac-studio` (kubectl context `kind-mac-studio`), kind running on **podman** — the node container is `mac-studio-control-plane`; use `podman exec`, `docker` is not on PATH.
+- hostPath: node `/mnt/workspaces/open-webui/data` → container `/app/backend/data` (`DirectoryOrCreate`); on the Mac `~/Workspaces` is bind-mounted, so in-repo `data/` == the live volume.
+- Manifests are namespace-less; they deploy into the current kubectl context (default: `default`).
+- The secret carries only `WEBUI_SECRET_KEY`; pod env = `TZ` + that. **Langfuse keys are NOT injected via env** — the README's Configuration table claiming otherwise is stale; manifest/cluster is canonical.
+- The cluster also hosts the rest of the furseal stack (bifrost, langfuse, pgadmin, redis, rustfs, scriberr, searxng); only `open-webui*` resources belong to this repo — don't touch the others.
 
-## Apply order (matters, or pods start without env vars / fail to resolve Secret)
+## Apply order (matters, or pods start without env vars / fail on the Secret ref)
 ```sh
-# 1. secret first — Deployment's envFrom refs it explicitly
-kubectl apply -f k8s/open-webui-secret.yaml
-
-# 2. service + deployment + ingress are all in this file; applied together
-kubectl apply -f k8s/open-webui-deployment.yaml    # ClusterIP svc → Ingress(open-webui.localhost) → svc:8080
-
-# 3. optional, only if you want the ai.furseal.net route (gitignored, not in a fresh clone)
-kubectl apply -f k8s/open-webui-external-ingress.yaml
+kubectl apply -f k8s/open-webui-secret.yaml              # 1. Deployment's envFrom refs it
+kubectl apply -f k8s/open-webui-deployment.yaml         # 2. Ingress + Service + Deployment
+kubectl apply -f k8s/open-webui-external-ingress.yaml   # 3. optional: ai.furseal.net (gitignored; absent in fresh clones)
 ```
-Note: the README's "step 3 = Ingress" line is misleading — the local ingress is defined in `open-webui-deployment.yaml`; only the external host lives in a third file.
 
 ## Initial admin bootstrap (one-time per fresh empty DB only)
-1. Visit `/auth/admin/setup` on first boot → no users exist yet.
+1. Visit `/auth/admin/setup` on first boot — no users exist yet.
 2. Admin → Configure Networking: API endpoint = `http://bifrost:8080/v1`; verify `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`.
-3. Admin → Observability/Langfuse: set `LANGFUSE_PUBLIC_KEY`, `LANGFURSE_SECRET_KEY`, `LANGFUSE_HOST=http://langfuse:3000` (values live in the secret manifest; paste there, never plaintext).
+3. Optional Langfuse: configure in the Admin UI (Obs/observability; host `http://langfuse:3000`) — keys are not supplied via the secret/env.
 
 ## Runtime ops cheat sheet
 ```sh
 kubectl logs -f deploy/open-webui           # live pod logs
 kubectl rollout restart deployment open-webui  # after config/secret changes
-kubectl get pods,svc,ingress,pvc              # into current context namespace
-# backup runtime volume on the Kind node:
+kubectl get pods,svc,ingress                # current context, namespace-less
+# stop writers, then back up / restore the runtime volume:
+kubectl scale deploy open-webui --replicas=0
 rsync -av /mnt/workspaces/open-webui/data/ "/mnt/backups/open-webui-data-$(date +%F)/"
 ```
 
-## Verification step (after any manifest edit)
+## Verification (after any manifest edit)
 `kubectl apply --dry-run=client -o yaml -f k8s/` then
-`kubectl diff -f k8s/open-webui-deployment.yaml`; ensure `envFrom.secretRef.name: open-webui-secret` resolves to a present Secret before rollout.
+`kubectl diff -f k8s/open-webui-deployment.yaml`; ensure `envFrom.secretRef.name: open-webui-secret` resolves before rollout.
 
-## Gotchas an agent is likely to hit otherwise
-- Editing the image tag to remove `.v`-pin in favor of `:main` will drift from what this repo ships.
-- Rotating `WEBUI_SECRET_KEY` invalidates sessions; re-apply secret + `rollout restart`.
-- Keep `ai.furseal.net` out of `open-webui-deployment.yaml` — its route belongs in the gitignored `open-webui-external-ingress.yaml` or it leaks into commits and the repo can't ship without a real cert.
-- Ingress exposes `open-webui.localhost`; local DNS/`.localhost` resolution is your own host setup, not k8s'.
+## Gotchas
+- Rotating `WEBUI_SECRET_KEY` invalidates all sessions; re-apply secret + `rollout restart`.
+- Keep `ai.furseal.net` out of `open-webui-deployment.yaml` — it belongs in the gitignored external ingress, or it leaks into commits (the repo can't ship without a real cert).
+- `open-webui.localhost` resolution is host-side DNS, not k8s'.
+- README drifts from the manifests (Configuration table, Ingress steps); when they disagree, trust `k8s/*.yaml` and the live cluster.
