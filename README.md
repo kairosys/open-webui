@@ -14,11 +14,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/YAML-CB171E?style=flat&logo=yaml&logoColor=white" alt="YAML" />
   <img src="https://img.shields.io/badge/Kubernetes-326CE5?style=flat&logo=kubernetes&logoColor=white" alt="Kubernetes" />
-  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/Nginx-009639?style=flat&logo=nginx&logoColor=white" alt="Nginx" />
   <img src="https://img.shields.io/badge/SQLite-003B57?style=flat&logo=sqlite&logoColor=white" alt="SQLite" />
-  <img src="https://img.shields.io/badge/OpenAI-412991?style=flat&logo=openai&logoColor=white" alt="OpenAI" />
-  <img src="https://img.shields.io/badge/Ollama-000000?style=flat&logo=ollama&logoColor=white" alt="Ollama" />
 </p>
 
 This repository contains deployment manifests and runtime data for a containerized [Open WebUI](https://github.com/open-webui/open-webui) instance, the user-facing chat and agent interface for the **furseal** AI workspace. It is not the Open WebUI source code; there is no application code to build or test here.
@@ -30,9 +27,9 @@ This repository contains deployment manifests and runtime data for a containeriz
 | Single authoritative manifest | Service, Deployment, and local Ingress defined together in `k8s/open-webui-deployment.yaml` |
 | Pinned upstream image | Runs `ghcr.io/open-webui/open-webui:v0.11.0` with `imagePullPolicy: Always` |
 | Persistent state | Kind-node hostPath `/mnt/workspaces/open-webui/data` mounts to `/app/backend/data`, auto-provisioned via `DirectoryOrCreate` |
-| Secret-backed configuration | `envFrom` injects `WEBUI_SECRET_KEY` and Langfuse keys from `open-webui-secret` |
+| Secret-backed sessions | `envFrom` injects `WEBUI_SECRET_KEY` from `open-webui-secret` |
 | OpenAI-compatible gateway | Streaming completions and embeddings served through Bifrost at `http://bifrost:8080/v1` |
-| LLM observability | Traces and evaluations forwarded to Langfuse at `http://langfuse:3000` |
+| Optional LLM observability | Langfuse can be configured in the Admin UI at `http://langfuse:3000` |
 
 ## Quick Start
 
@@ -40,7 +37,7 @@ This repository contains deployment manifests and runtime data for a containeriz
 
 - A Kind Kubernetes cluster with the nginx ingress controller installed
 - `kubectl` configured against the target context — manifests are namespace-less and deploy into the current context
-- Bifrost gateway reachable at `http://bifrost:8080/v1`, Langfuse reachable at `http://langfuse:3000`
+- Bifrost gateway reachable at `http://bifrost:8080/v1`
 
 ### Apply the Secret
 
@@ -77,18 +74,20 @@ kubectl rollout restart deployment open-webui
 ### Inspect Cluster Resources
 
 ```sh
-kubectl get pods,svc,ingress,pvc
+kubectl get pods,svc,ingress
 ```
 
 ### Back Up Runtime State
 
 ```sh
+kubectl scale deploy open-webui --replicas=0
 rsync -av /mnt/workspaces/open-webui/data/ "/mnt/backups/open-webui-data-$(date +%F)/"
+kubectl scale deploy open-webui --replicas=1
 ```
 
 ## Architecture
 
-Open WebUI streams chat completions to the Bifrost gateway and forwards LLM traces to Langfuse. All persistent state (SQLite database, vector index, caches, uploads) lives on the hostPath volume mounted at `/app/backend/data`.
+Open WebUI streams chat completions to the Bifrost gateway. When configured in the Admin UI, it can also forward LLM traces to Langfuse. All persistent state (SQLite database, vector index, caches, uploads) lives on the hostPath volume mounted at `/app/backend/data`.
 
 ```mermaid
 %%{init: {
@@ -104,7 +103,6 @@ graph LR
     U[User Browser<br/>HTTP] --> I[Ingress / Service<br/>nginx · open-webui:8080]
     I --> P[Open WebUI Pod<br/>v0.11.0]
     P --> B[Bifrost Gateway<br/>http://bifrost:8080/v1]
-    B --> O[Ollama + Cloud LLMs]
     P --> L[Langfuse<br/>http://langfuse:3000]
     P --> D[(hostPath Data<br/>/app/backend/data)]
     SEC[open-webui-secret<br/>WEBUI_SECRET_KEY] -. envFrom .-> P
@@ -120,22 +118,20 @@ graph LR
     class I,B gateway
     class P service
     class D data
-    class O,L external
+    class L external
     class SEC auth
 ```
 
 ## Configuration
 
-Configuration is supplied through the `open-webui-secret` manifest, injected into the Deployment via `envFrom`. Generate your own values; never commit real keys.
+The session secret is supplied through the git-ignored `open-webui-secret` manifest and injected into the Deployment via `envFrom`. Generate your own value and never commit it.
 
 | Variable | Description | Default |
 |---|---|---|
 | `WEBUI_SECRET_KEY` | Session signing secret; rotating it invalidates active sessions | — |
-| `LANGFUSE_PUBLIC_KEY` | Langfuse public API key | — |
-| `LANGFUSE_SECRET_KEY` | Langfuse secret API key | — |
-| `LANGFUSE_HOST` | Langfuse endpoint | `http://langfuse:3000` |
+| `TZ` | Container timezone | `Asia/Hong_Kong` |
 
-Runtime limits are declared in the Deployment spec: `requests.memory: 1024Mi`, `limits.memory: 4096Mi`.
+Configure the Bifrost API endpoint and optional Langfuse integration in the Open WebUI Admin UI. Runtime memory is declared in the Deployment spec with a `1Gi` request and `2Gi` limit.
 
 ## Project Structure
 
@@ -162,10 +158,9 @@ open-webui/
 | Kubernetes | Orchestration |
 | Kind | Local cluster on the Mac Studio |
 | Nginx | Ingress controller |
-| Docker | Container runtime for the upstream image |
+| Podman | Container runtime for the Kind node |
 | Open WebUI | Self-hosted chat and agent interface (`v0.11.0`) |
 | Bifrost | OpenAI-compatible gateway at `bifrost:8080/v1` |
-| Ollama | Local model runtime |
 | Langfuse | LLM observability and tracing |
 | SQLite | Persistent application data |
 
