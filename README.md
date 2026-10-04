@@ -25,7 +25,7 @@ This repository contains deployment manifests and runtime data for a containeriz
 | Feature | Description |
 |---|---|
 | Single authoritative manifest | Service, Deployment, and local Ingress defined together in `k8s/open-webui-deployment.yaml` |
-| Pinned upstream image | Runs `ghcr.io/open-webui/open-webui:v0.11.0` with `imagePullPolicy: Always` |
+| Pinned upstream image | Runs `ghcr.io/open-webui/open-webui:v0.11.4` with `imagePullPolicy: Always` |
 | Persistent state | Kind-node hostPath `/mnt/workspaces/open-webui/data` mounts to `/app/backend/data`, auto-provisioned via `DirectoryOrCreate` |
 | Secret-backed sessions | `envFrom` injects `WEBUI_SECRET_KEY` from `open-webui-secret` |
 | OpenAI-compatible gateway | Streaming completions and embeddings served through Bifrost at `http://bifrost:8080/v1` |
@@ -101,7 +101,7 @@ Open WebUI streams chat completions to the Bifrost gateway. When configured in t
 }}%%
 graph LR
     U[User Browser<br/>HTTP] --> I[Ingress / Service<br/>nginx · open-webui:8080]
-    I --> P[Open WebUI Pod<br/>v0.11.0]
+    I --> P[Open WebUI Pod<br/>v0.11.4]
     P --> B[Bifrost Gateway<br/>http://bifrost:8080/v1]
     P --> L[Langfuse<br/>http://langfuse:3000]
     P --> D[(hostPath Data<br/>/app/backend/data)]
@@ -159,7 +159,7 @@ open-webui/
 | Kind | Local cluster on the Mac Studio |
 | Nginx | Ingress controller |
 | Podman | Container runtime for the Kind node |
-| Open WebUI | Self-hosted chat and agent interface (`v0.11.0`) |
+| Open WebUI | Self-hosted chat and agent interface (`v0.11.4`) |
 | Bifrost | OpenAI-compatible gateway at `bifrost:8080/v1` |
 | Langfuse | LLM observability and tracing |
 | SQLite | Persistent application data |
