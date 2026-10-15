@@ -17,7 +17,7 @@ not run application-level build/test/lint/fix commands. Treat these as k8s manif
 - Don't hand-edit `data/` like source, and don't modify `webui.db` while the pod runs — back it up (rsync below) and `kubectl scale deploy open-webui --replicas=0` first.
 
 ## Deployment facts (verified against manifest + live cluster)
-- Image `ghcr.io/open-webui/open-webui:v0.11.4`, `imagePullPolicy: Always`. Don't re-tag to `:main` without intent.
+- Image `ghcr.io/open-webui/open-webui:v0.12.2`, `imagePullPolicy: Always`. Don't re-tag to `:main` without intent.
 - Kind cluster `mac-studio` (kubectl context `kind-mac-studio`), kind running on **podman** — the node container is `mac-studio-control-plane`; use `podman exec`, `docker` is not on PATH.
 - hostPath: node `/mnt/workspaces/open-webui/data` → container `/app/backend/data` (`DirectoryOrCreate`); on the Mac `~/Workspaces` is bind-mounted, so in-repo `data/` == the live volume.
 - Manifests are namespace-less; they deploy into the current kubectl context (default: `default`).
